@@ -55,26 +55,31 @@ static volatile btn_t btnall[] = {
 static void pwrDeepSleep(uint64_t timer = 0);
 
 
-static int cy = 0;
+static int cy = 0, ca = 0;
 static void clear() {
     digitalWrite(LED_RED,   LOW);
     digitalWrite(LED_BLUE,  LOW);
     digitalWrite(LED_GREEN, LOW);
     cy = 0;
+    ca = 0;
 }
 static void nexty() {
     cy++;
     digitalWrite(LED_BLUE,  (cy%10) < 5 ? HIGH : LOW);
 
-    if (cy >= 35) {
-        cy = 0;
+    if (cy >= 35)
         pwrDeepSleep();
-    }
+}
+static void nexta() {
+    ca++;
+    if (ca >= 1800)
+        pwrDeepSleep();
 }
 
 static void push_r() {
     clear();
     digitalWrite(LED_RED,   HIGH);
+    nexta();
 }
 static void push_b() {
     clear();
@@ -83,10 +88,12 @@ static void push_b() {
 static void push_y() {
     clear();
     digitalWrite(LED_BLUE,  HIGH);
+    nexta();
 }
 static void push_g() {
     clear();
     digitalWrite(LED_GREEN, HIGH);
+    nexta();
 }
 
 void IRAM_ATTR btnChkState(volatile btn_t &b) {
@@ -230,6 +237,8 @@ void loop() {
 
     if (cy)
         nexty();
+    if (ca)
+        nexta();
     
     delay(100);
 }
