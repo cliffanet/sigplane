@@ -4,7 +4,7 @@
 #define BTN_YELLOW    33
 #define BTN_GREEN     32
 
-#define LED_RED       5
+#define LED_RED       23
 #define LED_BLUE      19
 #define LED_GREEN     18
 

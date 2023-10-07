@@ -1,0 +1,4 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "YX5300")(type "KiCad")(uri "/Users/cliff/dev/sigplane/hw/YX5300/YX5300.kicad_sym")(options "")(descr ""))
+)
