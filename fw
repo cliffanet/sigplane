@@ -1,0 +1,272 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use utf8;
+
+use IPC::Open3;
+
+#==========================================================
+
+my @version = (0, 2, 0);
+my $portspeed = 115200;
+
+my $dir     = 'arch.fw';
+
+#==========================================================
+
+my $fqbn    = 'esp32:esp32:esp32:PSRAM=disabled,PartitionScheme=default,CPUFreq=80,FlashMode=qio,FlashFreq=80,FlashSize=4M,UploadSpeed=921600,DebugLevel=none';
+#my $fqbn    = 'esp32:esp32:esp32:JTAGAdapter=default,PSRAM=disabled,PartitionScheme=large_spiffs_16MB,CPUFreq=80,FlashMode=qio,FlashFreq=80,FlashSize=16M,UploadSpeed=921600,DebugLevel=none';
+my @flags   = qw/
+        ESP32
+        CORE_DEBUG_LEVEL=0
+    /;
+
+my $cli     = 'arduino-cli';
+
+#==========================================================
+
+    my $pathRoot = $0;
+    $pathRoot =~ s/\/+/\//g;
+    $pathRoot =~ s/[^\/]+$//;
+    $dir || exit -1;
+    if ($dir !~ /^\//) {
+        $dir = $pathRoot . '/' . $dir;
+    }
+
+#==========================================================
+
+my %cmd = (
+    upload          => \&upload,
+    compile         => \&compile,
+    compileupload   => \&compileupload,
+    showport        => \&showport,
+    reset           => \&reset,
+);
+    
+    my $cmd = shift @ARGV;
+    if (!$cmd || !$cmd{$cmd}) {
+        print "  Command list:\n";
+        foreach my $cmd (sort keys %cmd) {
+            print "  - $cmd\n";
+        }
+        exit -1;
+    }
+    
+    $cmd{$cmd}->(@ARGV) || exit -1;
+
+#==========================================================
+
+sub fname {
+    my $ver = join('.', @version) || return;
+    my $name = 'sigplane.v'.$ver;
+    
+    return $name;
+}
+
+sub runcmd {
+    my $cmd = shift;
+    
+    print "=== $cmd\n";
+    
+    my ($fhi, $fho);
+    # почему-то stderr не открывается через переменную
+    my $pid = open3($fhi, $fho, \*CHLD_ERR, $cmd);
+    if (!$pid) {
+        print "===\n";
+        print "!!! error: $! !!!\n";
+        print "===\n";
+        return;
+    }
+    
+    while (defined(my $str = <$fho>)) {
+        $str =~ s/\s+$//;
+        print "=== $str\n";
+    }
+    
+    my $ret = 1;
+    while (defined(my $str = <CHLD_ERR>)) {
+        $str =~ s/\s+$//;
+        print "ERR: $str\n";
+        $ret = 0 if $str =~ /(error|failed)/i;
+    }
+    
+    waitpid( $pid, 0 );
+    my $child_exit_status = $? >> 8;
+    if ($child_exit_status) {
+        print "return status: $child_exit_status\n";
+        $ret = 0;
+    }
+    
+    return $ret;
+}
+
+sub md5upd {
+    my $fname = shift;
+    my $f1 = $fname.'.bin';
+    my $f2 = $fname.'.md5';
+    
+    `md5 < $f1 > $f2`;
+}
+
+sub flags {
+    my @fl = @flags;
+    my $n = 0;
+    foreach my $num (@version) {
+        $n++;
+        push @fl, sprintf('FWVER_NUM%d=%s', $n, $num||0);
+    }
+    foreach my $f (@_) {
+        if (ref($f) eq 'HASH') {
+            push @fl, @{ $f->{flags} || [] };
+        }
+        elsif (ref($f) eq 'ARRAY') {
+            push @fl, @$f;
+        }
+        elsif ($f) {
+            push @fl, $f;
+        }
+    }
+    
+    @flags || return '';
+    return '--build-property build.extra_flags="'.join(' ', map { '-D'.$_ } @fl).'"';
+}
+
+sub build {
+    $cli || return;
+    my $srcdir = $pathRoot;
+    
+    my $fname = fname();
+    print "\n=======================================================\n";
+    print "=== BUILD: $fname\n";
+    print "=======================================================\n";
+    
+    my $flags = flags();
+    #$flags .= ' --clean';
+    #$flags .= ' --verbose';
+    #print "FLAGS: $flags\n";
+    
+    my $cmd = "$cli compile --fqbn $fqbn --output-dir $dir/.build $flags $srcdir";# --verbose --log-level trace --clean";
+    runcmd($cmd) || return;
+    
+    return unless -f "$dir/.build/sigplane.ino.bin";
+    rename("$dir/.build/sigplane.ino.bin", "$dir/${fname}.bin") || return;
+    if (-f "$dir/.build/sigplane.ino.partitions.bin") {
+        rename("$dir/.build/sigplane.ino.partitions.bin", "$dir/${fname}.partitions.bin") || return;
+    }
+    if (-f "$dir/.build/sigplane.ino.bootloader.bin") {
+        rename("$dir/.build/sigplane.ino.bootloader.bin", "$dir/${fname}.bootloader.bin") || return;
+    }
+    unlink "$dir/.build/sigplane.ino.elf";
+    unlink "$dir/.build/sigplane.ino.map";
+    
+    md5upd($dir.'/'.$fname);
+    
+    return 1;
+}
+
+sub burn {
+    my ($port) = @_;
+    
+    $cli || return;
+    
+    my $fname = fname();
+    print "\n=======================================================\n";
+    print "=== UPLOAD: $fname\n";
+    print "=======================================================\n";
+    
+    my $cmd = "$cli upload --fqbn $fqbn -i $dir/${fname}.bin -p $port -t";
+    $cmd .= ' --verbose';
+    runcmd($cmd) || return;
+    
+    1;
+}
+
+sub print_argver_usage {
+    my $cmd = shift;
+    
+    my $port = '';
+    $port = ' <port>' if ($cmd eq 'upload') || ($cmd eq 'compileupload') || ($cmd eq 'showport');
+    
+    print "Usage:\n    fw $cmd$port\n";
+}
+
+sub argver {
+    my $cmd = shift() || return;
+    
+    my ($port);
+    
+    if (($cmd eq 'upload') || ($cmd eq 'compileupload') || ($cmd eq 'showport')) {
+        if (!@_) {
+            print "!!! undefined port\n";
+            print_argver_usage($cmd);
+            return;
+        }
+        $port = shift();
+        if ($port !~ /\//) {
+            $port = '/dev/'.$port;
+        }
+    }
+    
+    if (@_) {
+        print "!!! too many args\n";
+        print_argver_usage($cmd);
+        return;
+    }
+    
+    return ($port);
+}
+
+sub showtty {
+    my $port = shift() || return;
+    system('(stty speed '.$portspeed.' >/dev/null && cat) < '.$port);
+}
+
+#==========================================================
+
+sub upload {
+    my ($port) = argver('upload', @_);
+    
+    burn($port) || return;
+    showtty($port) || return;
+    1;
+}
+
+sub compile {
+    build() || return;
+}
+
+sub compileupload {
+    my ($port) = argver('compileupload', @_);
+    build() || return;
+    burn($port) || return;
+    showtty($port) || return;
+    1;
+}
+
+sub showport {
+    my ($port) = argver('showport', @_);
+
+    showtty($port) || return;
+    1;
+}
+
+sub reset {
+    my ($port) = argver('showport', @_);
+
+    my @cmd =   '/Users/cliff/Library/Arduino15/packages/esp32/tools/esptool_py/4.5/esptool';
+    push @cmd,  '-p', $port;
+    push @cmd,  '--after hard_reset';
+    push @cmd,  'read_mac';
+    my $cmd = join ' ', @cmd;
+
+    print "=== $cmd\n";
+    system($cmd) && return;
+    showtty($port) || return;
+    1;
+}
+
+##==========================================================
+#================================================== End ===
+#==========================================================
+1;

@@ -1,13 +1,29 @@
 
+#ifdef HW_VER0
 #define BTN_RED       35
 #define BTN_BLUE      34
 #define BTN_YELLOW    33
 #define BTN_GREEN     32
+#else
+#define BTN_RED       34
+#define BTN_BLUE      35
+#define BTN_YELLOW    32
+#define BTN_GREEN     33
+#endif
 
 #define LED_RED       23
 #define LED_BLUE      19
 #define LED_GREEN     18
 
+#define AUDEN         25
+
+#include <stdint.h>
+#include <string.h>
+
+#include "src/dfone.h"
+
+
+/* log */
 
 #define LOG_FMT(s)        PSTR(" [%u] %s(): " s), __LINE__, __FUNCTION__
 #define log(txt, ...)     log_P(LOG_FMT(txt), ##__VA_ARGS__)
@@ -38,6 +54,10 @@ static void log_P(const char *s, ...) {
     va_end (ap);
 }
 
+/* mp3 */
+DFOne mp3(Serial2, AUDEN);
+
+/* btn */
 
 typedef struct {
     uint8_t     pin;
@@ -54,6 +74,8 @@ static volatile btn_t btnall[] = {
 
 static void pwrDeepSleep(uint64_t timer = 0);
 
+
+/* led */
 
 static int cy = 0, ca = 0;
 static void clear() {
@@ -80,21 +102,27 @@ static void push_r() {
     clear();
     digitalWrite(LED_RED,   HIGH);
     nexta();
+    mp3.play(1, 1);
 }
 static void push_b() {
     clear();
     nexty();
+    mp3.play(1, 2);
 }
 static void push_y() {
     clear();
     digitalWrite(LED_BLUE,  HIGH);
     nexta();
+    mp3.play(1, 3);
 }
 static void push_g() {
     clear();
     digitalWrite(LED_GREEN, HIGH);
     nexta();
+    mp3.play(1, 4);
 }
+
+/* btn interrupt */
 
 void IRAM_ATTR btnChkState(volatile btn_t &b) {
     uint8_t val = digitalRead(b.pin);
@@ -113,6 +141,7 @@ bool btnpushed() {
     return false;
 }
 
+/* sleep */
 
 // Уход в сон с таймером - sleep
 static void pwrDeepSleep(uint64_t timer) {
@@ -138,6 +167,8 @@ static void pwrDeepSleep(uint64_t timer) {
     esp_deep_sleep_start();
     log("This will never be printed");
 }
+
+/* init */
 
 void setup() {
     // put your setup code here, to run once:
@@ -196,6 +227,9 @@ void setup() {
     pinMode(LED_BLUE,       OUTPUT);
     pinMode(LED_GREEN,      OUTPUT);
 
+    Serial2.begin(9600);
+    mp3.begin();
+
     log("start");
 }
 
@@ -239,6 +273,8 @@ void loop() {
         nexty();
     if (ca)
         nexta();
+    
+    mp3.recv();
     
     delay(100);
 }
