@@ -61,72 +61,57 @@ DFOne mp3(Serial2, AUDEN);
 
 typedef struct {
     uint8_t     pin;
-    void        (*hnd)();
-    uint64_t    bit;
-    bool        pushed;
+    void        (*hnd)(uint32_t c);
+    uint8_t     mp3;
+    uint8_t     pushed;
 } btn_t;
 static volatile btn_t btnall[] = {
-    { BTN_RED,    push_r },
-    { BTN_BLUE,   push_b },
-    { BTN_YELLOW, push_y },
-    { BTN_GREEN,  push_g },
+    { BTN_RED,    show_r, 1 },
+    { BTN_BLUE,   show_b, 2 },
+    { BTN_YELLOW, show_y, 3 },
+    { BTN_GREEN,  show_g, 4 },
 };
+
+#define pinbit(pin)     (static_cast<uint64_t>(1) << (pin))
 
 static void pwrDeepSleep(uint64_t timer = 0);
 
-
 /* led */
 
-static int cy = 0, ca = 0;
 static void clear() {
     digitalWrite(LED_RED,   LOW);
     digitalWrite(LED_BLUE,  LOW);
     digitalWrite(LED_GREEN, LOW);
-    cy = 0;
-    ca = 0;
-}
-static void nexty() {
-    cy++;
-    digitalWrite(LED_BLUE,  (cy%10) < 5 ? HIGH : LOW);
-
-    if (cy >= 35)
-        pwrDeepSleep();
-}
-static void nexta() {
-    ca++;
-    if (ca >= 1800)
-        pwrDeepSleep();
 }
 
-static void push_r() {
-    clear();
+static void show_r(uint32_t c) {
     digitalWrite(LED_RED,   HIGH);
-    nexta();
-    mp3.play(1, 1);
 }
-static void push_b() {
-    clear();
-    nexty();
-    mp3.play(1, 2);
+static void show_b(uint32_t c) {
+    digitalWrite(LED_BLUE,  (c%10) < 5 ? HIGH : LOW);
+    if (c >= 35)
+        pwrDeepSleep();
 }
-static void push_y() {
-    clear();
+static void show_y(uint32_t c) {
     digitalWrite(LED_BLUE,  HIGH);
-    nexta();
-    mp3.play(1, 3);
 }
-static void push_g() {
-    clear();
+static void show_g(uint32_t c) {
     digitalWrite(LED_GREEN, HIGH);
-    nexta();
-    mp3.play(1, 4);
 }
 
 /* btn interrupt */
 
-void IRAM_ATTR btnChkState(volatile btn_t &b) {
+void IRAM_ATTR btnChkState(volatile btn_t &b, bool fastoff = false) {
     uint8_t val = digitalRead(b.pin);
-    b.pushed = val == HIGH;
+    if (val == HIGH)
+        b.pushed = 5;
+    else
+    if (b.pushed > 0) {
+        if (fastoff)
+            b.pushed = 0;
+        else
+            b.pushed --;
+    }
 }
 void IRAM_ATTR btnChkState0() { btnChkState(btnall[0]); }
 void IRAM_ATTR btnChkState1() { btnChkState(btnall[1]); }
@@ -140,17 +125,23 @@ bool btnpushed() {
 
     return false;
 }
+void btnchkall(bool fastoff = false) {
+    for (auto &b: btnall)
+        btnChkState(b, fastoff);
+}
 
 /* sleep */
 
 // Уход в сон с таймером - sleep
 static void pwrDeepSleep(uint64_t timer) {
     // ожидаем, пока все кнопки будут отпущены
-    while (btnpushed())
-        delay(100);
+    while (btnpushed()) {
+        delay(30);
+        btnchkall(true);
+    }
 
     uint64_t m = 0;
-    for (const auto &b: btnall) m |= b.bit;
+    for (const auto &b: btnall) m |= pinbit(b.pin);
     auto r = esp_sleep_enable_ext1_wakeup(m, ESP_EXT1_WAKEUP_ANY_HIGH);
     //esp_sleep_enable_ext0_wakeup(GPIO_NUM_35,1);
     switch (r) {
@@ -174,11 +165,9 @@ void setup() {
     // put your setup code here, to run once:
     Serial.begin(115200);
 
-    for (auto &b: btnall) {
+    for (auto &b: btnall)
         pinMode(b.pin, INPUT);
-        b.bit = static_cast<uint64_t>(1) << b.pin;
-    }
-
+    
     auto wakeup_reason = esp_sleep_get_wakeup_cause();
     switch(wakeup_reason) {
         case ESP_SLEEP_WAKEUP_EXT0 :        log("Wakeup caused by external signal using RTC_IO"); break;
@@ -187,7 +176,7 @@ void setup() {
             {
                 auto p = esp_sleep_get_ext1_wakeup_status();
                 for (const auto &b: btnall)
-                    if ((b.bit & p) == b.bit)
+                    if ((p & pinbit(b.pin)) > 0)
                         log("Wakeup pin: %d", b.pin);
             }
             break;
@@ -197,8 +186,7 @@ void setup() {
         default : log("Wakeup was not caused by deep sleep: %d", wakeup_reason); break;
     }
 
-    for (auto &b: btnall)
-        btnChkState(b);
+    btnchkall();
     if (!btnpushed())
         pwrDeepSleep();
 
@@ -237,44 +225,50 @@ void loop() {
     // put your main code here, to run repeatedly:
 
     static const volatile btn_t *r = NULL;
-    static bool pushed = false;
+    static uint32_t c = 0;
+    static uint64_t pushed = 0;
 
-    const volatile btn_t *p = NULL;
-    for (const auto &b: btnall)
+    for (const auto &b: btnall) {
+        uint64_t bit = pinbit(b.pin);
+        bool psh = (pushed & bit) > 0;
         if (b.pushed) {
-            if (p == NULL)
-                p = &b;
+            if (psh)
+                continue;
+            
+            log("[%d] push", b.pin);
+            pushed |= bit;
+            c = 0;
+            clear();
+
+            if (r == &b) {
+                log("[%d] off", b.pin);
+                r = NULL;
+                pwrDeepSleep();
+            }
             else {
-                p = r;
-                break;
+                log("[%d] on", b.pin);
+                r = &b;
+                if (b.mp3 > 0)
+                    mp3.play(1, b.mp3);
             }
         }
-    
-    if (!pushed && (r != p) && (p != NULL)) {
-        log("push: %d", p->pin);
-        r = p;
-        pushed = true;
-        p->hnd();
-    }
-    if (!pushed && (r == p) && (p != NULL)) {
-        log("term: %d", p->pin);
-        r = NULL;
-        pushed = true;
-        clear();
-        pwrDeepSleep();
-    }
-    if (pushed && (p == NULL)) {
-        if (r != NULL)
-            log("release: %d", r->pin);
-        pushed = false;
+        else
+        if (psh) {
+            log("[%d] release", b.pin);
+            pushed &= ~bit;
+        }
     }
 
-    if (cy)
-        nexty();
-    if (ca)
-        nexta();
+    c++;
+    if (c > 1800)
+        pwrDeepSleep();
+
+    if (r != NULL)
+        r->hnd( c );
     
     mp3.recv();
     
     delay(100);
+
+    btnchkall();
 }

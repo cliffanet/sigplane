@@ -8,7 +8,7 @@ use IPC::Open3;
 
 #==========================================================
 
-my @version = (0, 2, 0);
+my @version = (0, 3, 0);
 my $portspeed = 115200;
 
 my $dir     = 'arch.fw';
