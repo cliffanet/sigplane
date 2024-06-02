@@ -260,7 +260,7 @@ void loop() {
     }
 
     c++;
-    if (c > 1800)
+    if (c > 1200)
         pwrDeepSleep();
 
     if (r != NULL)
