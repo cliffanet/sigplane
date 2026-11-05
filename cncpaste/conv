@@ -1,0 +1,39 @@
+#!/bin/sh
+
+OPT=""
+OPT+="--skip 28-41,48-53,56,57,60-63,64-66,90-92,77-88,104,105,113,114,126-137,120,148,106,107,124,149,150,151,169,180,191,202"
+OPT+=",211,220,106,221,154,174,168,206,242,248"
+OPT+=",175-177,199-201"
+OPT+=",162,163,165,166,213,214,216,217,178,183,192,197,179,184,193,198"
+
+OPT+=" --origin-pad 7 -bead-width 0.1"
+
+../../umka/tools/grb2gcode $OPT \
+    sigplane-head-F_Paste.gbr \
+    sigplane-head.svg
+
+../../umka/tools/grb2gcode $OPT \
+    sigplane-head-F_Paste.gbr \
+    sigplane-head.gcode
+
+../../umka/tools/grb2gcode $OPT --check-pad 221 \
+    sigplane-head-F_Paste.gbr \
+    sigplane-head-check.gcode
+
+
+OPT="--paste-factor .3"
+
+../../umka/tools/grb2gcode $OPT \
+    sigplane-power-F_Paste.gbr \
+    sigplane-power.svg
+
+../../umka/tools/grb2gcode $OPT \
+    sigplane-power-F_Paste.gbr \
+    sigplane-power.gcode
+
+../../umka/tools/grb2gcode $OPT --check-pad 28 \
+    sigplane-power-F_Paste.gbr \
+    sigplane-power-check.gcode
+
+
+
